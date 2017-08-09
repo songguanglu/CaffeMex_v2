@@ -44,6 +44,8 @@ class BaseConvolutionLayer : public Layer<Dtype> {
 #ifndef CPU_ONLY
   void forward_gpu_gemm(const Dtype* col_input, const Dtype* weights,
       Dtype* output, bool skip_im2col = false);
+  void forward_gpu_gemm_mask(const Dtype* col_input, const Dtype* weights,
+	  Dtype* output, const Dtype* mask_input, bool skip_im2col = false);
   void forward_gpu_bias(Dtype* output, const Dtype* bias);
   void backward_gpu_gemm(const Dtype* input, const Dtype* weights,
       Dtype* col_output);
@@ -73,14 +75,23 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   /// @brief The spatial dimensions of the convolution input.
   Blob<int> conv_input_shape_;
   /// @brief The spatial dimensions of the col_buffer.
+
+  Blob<int> pass_idx_;
+  Blob<Dtype> buffer_col_;
+  Blob<Dtype> output_buffer_;
   vector<int> col_buffer_shape_;
+  vector<int> col_buffer_shape_mask_;
   /// @brief The spatial dimensions of the output.
   vector<int> output_shape_;
-  const vector<int>* bottom_shape_;
 
+  vector<int> output_shape_mask_;
+  const vector<int>* bottom_shape_;
+  const vector<int>* bottom_mask_shape_;
   int num_spatial_axes_;
   int bottom_dim_;
+  int bottom_dim_mask_;
   int top_dim_;
+  int top_dim_mask_;
 
   int channel_axis_;
   int num_;
@@ -161,11 +172,14 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   int conv_out_channels_;
   int conv_in_channels_;
   int conv_out_spatial_dim_;
+  int conv_out_spatial_dim_mask_;
   int kernel_dim_;
   int col_offset_;
   int output_offset_;
-
+  int col_offset_mask_;
+  int output_offset_mask_;
   Blob<Dtype> col_buffer_;
+  Blob<Dtype> col_buffer_mask_;
   Blob<Dtype> bias_multiplier_;
 };
 

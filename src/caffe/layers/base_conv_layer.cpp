@@ -185,62 +185,100 @@ void BaseConvolutionLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
+ // LOG(INFO) << "Debuf here:enter reshape\n";
   const int first_spatial_axis = channel_axis_ + 1;
+//  LOG(INFO) << "Debuf here:enter ...3\n";
   CHECK_EQ(bottom[0]->num_axes(), first_spatial_axis + num_spatial_axes_)
       << "bottom num_axes may not change.";
+ // LOG(INFO) << "Debuf here:enter ...2\n";
   num_ = bottom[0]->count(0, channel_axis_);
+ // LOG(INFO) << "Debuf here:enter ...1\n";
   CHECK_EQ(bottom[0]->shape(channel_axis_), channels_)
       << "Input size incompatible with convolution kernel.";
   // TODO: generalize to handle inputs of different shapes.
-  for (int bottom_id = 1; bottom_id < bottom.size(); ++bottom_id) {
+  //modified by songgl for fast convolutional isn't generalize
+  /*for (int bottom_id = 1; bottom_id < bottom.size(); ++bottom_id) {
     CHECK(bottom[0]->shape() == bottom[bottom_id]->shape())
         << "All inputs must have the same shape.";
-  }
+  }*/
   // Shape the tops.
+  
   bottom_shape_ = &bottom[0]->shape();
+  bottom_mask_shape_ = &bottom[1]->shape();
+ // LOG(INFO) << "Debuf here:enter com\n";
   compute_output_shape();
+ // LOG(INFO) << "Debuf here:out com\n";
   vector<int> top_shape(bottom[0]->shape().begin(),
       bottom[0]->shape().begin() + channel_axis_);
+  vector<int> top_shape_mask_(bottom[1]->shape().begin(),
+	  bottom[1]->shape().begin() + channel_axis_);
+
   top_shape.push_back(num_output_);
+  top_shape_mask_.push_back(1);//mask_top_shape;
+  
   for (int i = 0; i < num_spatial_axes_; ++i) {
     top_shape.push_back(output_shape_[i]);
+	top_shape_mask_.push_back(output_shape_mask_[i]);
   }
   for (int top_id = 0; top_id < top.size(); ++top_id) {
-    top[top_id]->Reshape(top_shape);
+	  if (top_id == 1){
+		  top[top_id]->Reshape(top_shape_mask_);
+	  }else{
+		  top[top_id]->Reshape(top_shape);
+	  }
   }
   if (reverse_dimensions()) {
     conv_out_spatial_dim_ = bottom[0]->count(first_spatial_axis);
+//	conv_out_spatial_dim_mask_ = bottom[1]->count(first_spatial_axis);
   } else {
     conv_out_spatial_dim_ = top[0]->count(first_spatial_axis);
+//	conv_out_spatial_dim_mask_ = top[1]->count(first_spatial_axis);
   }
+
   col_offset_ = kernel_dim_ * conv_out_spatial_dim_;
+ // col_offset_mask_ = kernel_dim_ * conv_out_spatial_dim_mask_;
   output_offset_ = conv_out_channels_ * conv_out_spatial_dim_ / group_;
+ // output_offset_mask_ = conv_out_spatial_dim_ / group_;
   // Setup input dimensions (conv_input_shape_).
   vector<int> bottom_dim_blob_shape(1, num_spatial_axes_ + 1);
   conv_input_shape_.Reshape(bottom_dim_blob_shape);
   int* conv_input_shape_data = conv_input_shape_.mutable_cpu_data();
+//  int* conv_input_shape_data_mask = conv_input_shape_.mutable_cpu_data();
   for (int i = 0; i < num_spatial_axes_ + 1; ++i) {
     if (reverse_dimensions()) {
       conv_input_shape_data[i] = top[0]->shape(channel_axis_ + i);
+//	  conv_input_shape_data_mask[i] = top[1]->shape(channel_axis_ + i);
     } else {
       conv_input_shape_data[i] = bottom[0]->shape(channel_axis_ + i);
+//	  conv_input_shape_data_mask[i] = bottom[1]->shape(channel_axis_ + i)s
     }
   }
   // The im2col result buffer will only hold one image at a time to avoid
   // overly large memory usage. In the special case of 1x1 convolution
   // it goes lazily unused to save memory.
   col_buffer_shape_.clear();
+ // col_buffer_shape_mask_.clear();
   col_buffer_shape_.push_back(kernel_dim_ * group_);
+ // col_buffer_shape_mask_.push_back(kernel_dim_ * group_);
+
   for (int i = 0; i < num_spatial_axes_; ++i) {
     if (reverse_dimensions()) {
       col_buffer_shape_.push_back(input_shape(i + 1));
+	//  col_buffer_shape_mask_.push_back((*bottom_mask_shape_)[channel_axis_ + i+1]);
     } else {
       col_buffer_shape_.push_back(output_shape_[i]);
+	//  col_buffer_shape_mask_.push_back(output_shape_mask_[i+1]);
     }
   }
   col_buffer_.Reshape(col_buffer_shape_);
+ // col_buffer_mask_.Reshape(col_buffer_shape_mask_);
+
   bottom_dim_ = bottom[0]->count(channel_axis_);
+//  bottom_dim_mask_ = bottom[1]->count(channel_axis_);
+
   top_dim_ = top[0]->count(channel_axis_);
+//  top_dim_mask_ = top[1]->count(channel_axis_);
+
   num_kernels_im2col_ = conv_in_channels_ * conv_out_spatial_dim_;
   num_kernels_col2im_ = reverse_dimensions() ? top_dim_ : bottom_dim_;
   // Set up the all ones "bias multiplier" for adding biases by BLAS
@@ -338,6 +376,85 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
         (Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
         (Dtype)0., output + output_offset_ * g);
   }
+}
+
+template <typename Dtype>
+void BaseConvolutionLayer<Dtype>::forward_gpu_gemm_mask(const Dtype* input,
+	const Dtype* weights, Dtype* output, const Dtype* mask_input,bool skip_im2col) {
+	//const Dtype* col_buff = input;
+	//const Dtype* col_buff_mask = mask_input;
+	const int height = conv_input_shape_.cpu_data()[1];
+	const int width = conv_input_shape_.cpu_data()[2];
+	const int kernel_h = kernel_shape_.cpu_data()[0];
+	const int kernel_w = kernel_shape_.cpu_data()[1];
+	const int pad_h = pad_.cpu_data()[0];
+	const int pad_w = pad_.cpu_data()[1];
+	const int stride_h = stride_.cpu_data()[0];
+	const int stride_w = stride_.cpu_data()[1];
+	const int dilation_h = dilation_.cpu_data()[0];
+	const int dilation_w = dilation_.cpu_data()[1];
+	int height_col = (height + 2 * pad_h -
+		(dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
+	int width_col = (width + 2 * pad_w -
+		(dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
+	int skip_num = height_col*width_col;
+	int validnum = caffe_cpu_asum(height_col*width_col, mask_input);
+	pass_idx_.Reshape(validnum, 1, 1, 1);
+	buffer_col_.Reshape(kernel_dim_, validnum, 1, 1);
+	Dtype* buffer_col_data = buffer_col_.mutable_cpu_data();
+	//Dtype* buffer_col_data = buffer_col_.mutable_cpu_data();
+	output_buffer_.Reshape(conv_out_channels_, validnum, 1, 1);
+	int idx = 0;
+	//if (!is_1x1_) {;
+	if (1){
+		//if (!skip_im2col) {
+		if (1){
+			conv_im2col_gpu(input, col_buffer_.mutable_gpu_data()); //here 11111
+		}
+	//	LOG(INFO) << "Debuf here:finish im2col\n";
+		const Dtype* col_buff = col_buffer_.cpu_data();
+	//	col_buff = col_buffer_.cpu_data();
+		//generate new trans respond to mask 1
+		for (int h = 0; h < height_col; h++){
+			for (int w = 0; w < width_col; w++){
+				if (mask_input[h*width_col + w] >= 1)
+				{
+					for (int temp = 0; temp < kernel_dim_; temp++){
+						buffer_col_data[temp*validnum + idx] = col_buff[temp*height_col*width_col + h*width_col + w];
+					}
+					idx += 1;
+				}
+			}
+		}
+		
+	}
+	//Dtype* output_buffer_data = output_buffer_.mutable_gpu_data();
+	//const Dtype* buffer_col_data_com = buffer_col_.gpu_data();
+	Dtype* output_buffer_data = output_buffer_.mutable_gpu_data();
+	const Dtype* buffer_col_data_com = buffer_col_.gpu_data();
+	for (int g = 0; g < group_; ++g) {
+		caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
+			group_, validnum, kernel_dim_,
+			(Dtype)1., weights + weight_offset_ * g, buffer_col_data_com + col_offset_ * g,
+			(Dtype)0., output_buffer_data + conv_out_channels_* validnum / group_* g); //here11111
+	}
+//	LOG(INFO) << "Debuf here:finish gpu_gemm\n";
+	//generate new output for mask 0
+	caffe_set(output_offset_, Dtype(0), output);
+	idx = 0;
+//	const Dtype* output_buffer_data_fin = output_buffer_.cpu_data();
+	const Dtype* output_buffer_data_fin = output_buffer_.cpu_data();
+	for (int h = 0; h < height_col; h++){
+		for (int w = 0; w < width_col; w++){
+			if (mask_input[h*width_col + w] >= 1)
+			{
+				for (int temp = 0; temp < conv_out_channels_; temp++){
+					output[temp*height_col*width_col + h*width_col + w] = output_buffer_data_fin[temp*validnum + idx];
+				}
+				idx += 1;
+			}
+		}
+	}
 }
 
 template <typename Dtype>
