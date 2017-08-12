@@ -8,7 +8,7 @@
 #include "caffe/proto/caffe.pb.h"
 
 #include "caffe/layers/base_conv_layer.hpp"
-
+#include "windows.h"
 namespace caffe {
 
 /**
@@ -67,6 +67,7 @@ class ConvolutionLayer : public BaseConvolutionLayer<Dtype> {
   virtual inline const char* type() const { return "Convolution"; }
 
  protected:
+
   virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);
   virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
@@ -76,6 +77,8 @@ class ConvolutionLayer : public BaseConvolutionLayer<Dtype> {
   virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
       const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
   virtual inline bool reverse_dimensions() { return false; }
+  void forward_gpu_gemm_mask(const Dtype* col_input, const Dtype* weights,
+	  Dtype* output, const Dtype* mask_input, bool skip_im2col = false);
   virtual void compute_output_shape();
 };
 

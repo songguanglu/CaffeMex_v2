@@ -7,7 +7,7 @@
 #include "caffe/layer.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/im2col.hpp"
-
+#include "time.h"
 namespace caffe {
 
 /**
@@ -28,7 +28,7 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   virtual inline int MinTopBlobs() const { return 1; }
   virtual inline bool EqualNumBottomTopBlobs() const { return true; }
 
- protected:
+ //protected:
   // Helper functions that abstract away the column buffer and gemm arguments.
   // The last argument in forward_cpu_gemm is so that we can skip the im2col if
   // we just called weight_cpu_gemm with the same input.
@@ -40,12 +40,16 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   void weight_cpu_gemm(const Dtype* input, const Dtype* output, Dtype*
       weights);
   void backward_cpu_bias(Dtype* bias, const Dtype* input);
-
+  /*virtual void Forward_gpu(const vector<Blob<Dtype>*>& bottom,
+	  const vector<Blob<Dtype>*>& top);
+  virtual void Backward_gpu(const vector<Blob<Dtype>*>& top,
+	  const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom);
+  virtual void forward_gpu_gemm_mask(const Dtype* col_input, const Dtype* weights,
+	  Dtype* output, const Dtype* mask_input, bool skip_im2col = false);*/
 #ifndef CPU_ONLY
   void forward_gpu_gemm(const Dtype* col_input, const Dtype* weights,
       Dtype* output, bool skip_im2col = false);
-  void forward_gpu_gemm_mask(const Dtype* col_input, const Dtype* weights,
-	  Dtype* output, const Dtype* mask_input, bool skip_im2col = false);
+
   void forward_gpu_bias(Dtype* output, const Dtype* bias);
   void backward_gpu_gemm(const Dtype* input, const Dtype* weights,
       Dtype* col_output);
@@ -79,6 +83,10 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   Blob<int> pass_idx_;
   Blob<Dtype> buffer_col_;
   Blob<Dtype> output_buffer_;
+  Blob<int> src_index_;
+  Blob<int> dst_index_;
+  Blob<int> src_fin_index_;
+  Blob<int> dst_fin_index_;
   vector<int> col_buffer_shape_;
   vector<int> col_buffer_shape_mask_;
   /// @brief The spatial dimensions of the output.
@@ -87,12 +95,13 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   vector<int> output_shape_mask_;
   const vector<int>* bottom_shape_;
   const vector<int>* bottom_mask_shape_;
+  
   int num_spatial_axes_;
   int bottom_dim_;
   int bottom_dim_mask_;
   int top_dim_;
   int top_dim_mask_;
-
+  int output_offset_;
   int channel_axis_;
   int num_;
   int channels_;
@@ -104,7 +113,7 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   bool is_1x1_;
   bool force_nd_im2col_;
 
- private:
+ //private:
   // wrap im2col/col2im so we don't have to remember the (long) argument lists
   inline void conv_im2col_cpu(const Dtype* data, Dtype* col_buff) {
     if (!force_nd_im2col_ && num_spatial_axes_ == 2) {
@@ -169,13 +178,13 @@ class BaseConvolutionLayer : public Layer<Dtype> {
 
   int num_kernels_im2col_;
   int num_kernels_col2im_;
-  int conv_out_channels_;
+  
   int conv_in_channels_;
   int conv_out_spatial_dim_;
   int conv_out_spatial_dim_mask_;
-  int kernel_dim_;
+  int conv_out_channels_;
   int col_offset_;
-  int output_offset_;
+  int kernel_dim_;
   int col_offset_mask_;
   int output_offset_mask_;
   Blob<Dtype> col_buffer_;
